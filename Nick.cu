@@ -7,15 +7,16 @@
  
 // includes, system
 #include <stdlib.h>
-#include <stdio.h>
+#include <stdio.h> //FILE*, fopen, fclose, fread, fwrite
 #include <string.h>
 #include <math.h>
+#include <time.h> //clock_t, clock
 
 // includes, project
-#include <cutil.h>
+//#include <cutil.h>
 
 // includes, kernels
-#include <Nick_kernel.cu>
+#include "Nick_kernel.cu"
 
 ////////////////////////////////////////////////////////////////////////////////
 // declarations, forward
@@ -33,6 +34,7 @@ void FreeDeviceMatrix(Matrix* M);
 void FreeMatrix(Matrix* M);
 
 void NickOnDevice(const Matrix N, Matrix P_global, Matrix P_shared1, Matrix P_shared2);
+bool comparefe(float* A, float* B, int len, float tol);
 
 float cpu_run_time;
 float gpu_run_time;
@@ -56,6 +58,7 @@ int main(int argc, char** argv) {
 	Matrix  P_shared2;
 	
 	srand(2012);
+       int sizex, sizey;
 	
 	if(argc != 4 && argc != 3) 
 	{
@@ -69,21 +72,14 @@ int main(int argc, char** argv) {
 	else
 	{
 		// Allocate and read in matrices from disk
-		int* params = NULL; 
-		unsigned int data_read = 0;
-		cutReadFilei(argv[1], &params, &data_read, true);
-		if(data_read != 2){
-			printf("Error reading parameter file\n");
-			cutFree(params);
-			return 1;
-		}
+                sizex = atoi(argv[1]);
+                sizey = atoi(argv[2]);
 
 		//M  = AllocateMatrix(KERNEL_SIZE, KERNEL_SIZE, 0);
-		N  = AllocateMatrix(params[0], params[1], 0);		
-		P_global  = AllocateMatrix(params[0], params[1], 0);
-		P_shared1  = AllocateMatrix(params[0], params[1], 0);
-		P_shared2  = AllocateMatrix(params[0], params[1], 0);
-		cutFree(params);
+		N  = AllocateMatrix(sizex, sizey, 0);		
+		P_global  = AllocateMatrix(sizex, sizey, 0);
+		P_shared1  = AllocateMatrix(sizex, sizey, 0);
+		P_shared2  = AllocateMatrix(sizex, sizey, 0);
 		//(void)ReadFile(&M, argv[2]);
 		(void)ReadFile(&N, argv[2]);
 	}
@@ -96,13 +92,10 @@ int main(int argc, char** argv) {
     // compute the matrix convolution on the CPU for comparison
     Matrix reference = AllocateMatrix(P_global.height, P_global.width, 0);
 	
-	unsigned int MyTimer_CPU = 0;
-	cutCreateTimer(&MyTimer_CPU);
-	
-	cutStartTimer(MyTimer_CPU);
+	clock_t start = clock();
+        float cpu_run_time;
     computeGold(reference.elements, N.elements, N.height, N.width);
-    cutStopTimer(MyTimer_CPU); 
-	cpu_run_time = 	cutGetTimerValue(MyTimer_CPU);
+        cpu_run_time = (clock()-start)*1000./CLOCKS_PER_SEC;
 	
 	printf("Elapsed time for running CPU kernel = %f ms\n", cpu_run_time );
 	
@@ -115,9 +108,9 @@ int main(int argc, char** argv) {
 	printf("Speedup CPU/GPU Total (shared2)= %f \n\n", cpu_run_time/gpu_total_time_shared2 );
 	
     // in this case check if the result is equivalent to the expected soluion
-    CUTBoolean res_global = cutComparefe(reference.elements, P_global.elements, P_global.width * P_global.height, 0.001f);
-	CUTBoolean res_shared1 = cutComparefe(reference.elements, P_shared1.elements, P_shared1.width * P_shared1.height, 0.001f);
-	CUTBoolean res_shared2 = cutComparefe(reference.elements, P_shared2.elements, P_shared2.width * P_shared2.height, 0.001f);
+    bool res_global = comparefe(reference.elements, P_global.elements, P_global.width * P_global.height, 0.001f);
+	bool res_shared1 = comparefe(reference.elements, P_shared1.elements, P_shared1.width * P_shared1.height, 0.001f);
+	bool res_shared2 = comparefe(reference.elements, P_shared2.elements, P_shared2.width * P_shared2.height, 0.001f);
     printf("Test CUDA kernel global %s \n", (1 == res_global) ? "PASSED" : "FAILED");
 	printf("Test CUDA kernel shared1 %s \n", (1 == res_shared1) ? "PASSED" : "FAILED");
 	printf("Test CUDA kernel shared2 %s \n", (1 == res_shared2) ? "PASSED" : "FAILED");
@@ -163,32 +156,28 @@ void NickOnDevice(const Matrix N, Matrix P_global, Matrix P_shared1, Matrix P_sh
 	float Overhead_Copy;
 	//Define a timer from cutil.h
 	//MyTimer_overhead is for measuring overhead time
-	unsigned int MyTimer_overhead = 0;
-	cutCreateTimer(&MyTimer_overhead);
 	
 	//MyTimer_kernel is for measuring  time elapsed for running kernels
-	unsigned int MyTimer_kernel = 1;
-	cutCreateTimer(&MyTimer_kernel);
  
 	//Allocating memory and measuring their overhead time
-	cutStartTimer(MyTimer_overhead);
+        clock_t start = clock();
 	Matrix Nd = AllocateDeviceMatrix(N);
 	Matrix Pd_global = AllocateDeviceMatrix(P_global);	
 	Matrix Pd_shared1 = AllocateDeviceMatrix(P_shared1);
 	Matrix Pd_shared2 = AllocateDeviceMatrix(P_shared2);
-	cutStopTimer(MyTimer_overhead);
+        Overhead_Copy = (clock() - start) * 1000./CLOCKS_PER_SEC;	
 //	Overhead_allocation = cutGetTimerValue(MyTimer_overhead);
 //	printf("Elapsed time - Overhead - Allocating = %f ms\n", Overhead_allocation );
 	
-	cutResetTimer(MyTimer_overhead);
-	cutStartTimer(MyTimer_overhead);	
+        start = clock();
 	//Copy N to constant Memory
 	//cudaMemcpyToSymbol(Nc, N.elements , IMAGE_WIDTH*IMAGE_HEIGTH*sizeof(float));
 	//Copy N to Device Memory 
     CopyToDeviceMatrix(Nd, N);	    
     //Clearing memory
     CopyToDeviceMatrix(Pd_global, P_global);	
-	cutStopTimer(MyTimer_overhead);
+        Overhead_Copy += (clock() - start) * 1000./CLOCKS_PER_SEC;	
+	
 	
 	CopyToDeviceMatrix(Pd_shared1, P_shared1);
 	CopyToDeviceMatrix(Pd_shared2, P_shared2);	
@@ -217,42 +206,35 @@ void NickOnDevice(const Matrix N, Matrix P_global, Matrix P_shared1, Matrix P_sh
 	
 	
 	//1. All accesses from global memory
-	cutStartTimer(MyTimer_kernel);
+        start = clock();
 			NickKernel<<<dimGrid, dimBlock>>>( Nd, Pd_global ,Nd.width, Nd.height );
  	cudaDeviceSynchronize();	
-	cutStopTimer(MyTimer_kernel);
-	gpu_run_time = cutGetTimerValue(MyTimer_kernel);
+	gpu_run_time = (clock() - start)*1000./CLOCKS_PER_SEC;
 	
 	//2. Some accesses from shared memory and some from global memory
-	cutResetTimer(MyTimer_kernel);
-	cutStartTimer(MyTimer_kernel);
+        start = clock();
 			NickKernel_shared1<<<dimGrid, dimBlock_Shared1>>>( Nd, Pd_shared1, Nd.width, Nd.height );
  	cudaDeviceSynchronize();	
-	cutStopTimer(MyTimer_kernel);
-	gpu_run_time_shared1 = cutGetTimerValue(MyTimer_kernel);
+	gpu_run_time_shared1 = (clock() - start)*1000./CLOCKS_PER_SEC;
 	
 	//3. All accesses from shared memory
-	cutResetTimer(MyTimer_kernel);
-	cutStartTimer(MyTimer_kernel);
+        start = clock();
 		NickKernel_shared2<<<dimGrid, dimBlock_Shared2>>>( Nd, Pd_shared2, Nd.width, Nd.height );
  	cudaDeviceSynchronize();	
-	cutStopTimer(MyTimer_kernel);	
-	gpu_run_time_shared2 = cutGetTimerValue(MyTimer_kernel);
+	gpu_run_time_shared2 = (clock() - start)*1000./CLOCKS_PER_SEC;
 	
 	
 	printf("Elapsed time for running Kernels on GPUs (global)= %f ms\n", gpu_run_time );
 	printf("Elapsed time for running Kernels on GPUs (shared1) = %f ms\n", gpu_run_time_shared1 );
 	printf("Elapsed time for running Kernels on GPUs (shared2) = %f ms\n", gpu_run_time_shared2 );	
 	
-	cutStartTimer(MyTimer_overhead);	
+	start = clock();
     // Read P from the device
     CopyFromDeviceMatrix(P_global, Pd_global); 
-	cutStopTimer(MyTimer_overhead);
-	
+        Overhead_Copy += (clock() - start) * 1000./CLOCKS_PER_SEC;	
 	CopyFromDeviceMatrix(P_shared1, Pd_shared1);
 	CopyFromDeviceMatrix(P_shared2, Pd_shared2);
 	
-	Overhead_Copy = cutGetTimerValue(MyTimer_overhead);
 	printf("Elapsed time - Overhead - Copy = %f ms\n", Overhead_Copy );
 	
 
@@ -343,13 +325,23 @@ void FreeMatrix(Matrix* M)
 int ReadFile(Matrix* M, char* file_name)
 {
 	unsigned int data_read = M->height * M->width;
-	cutReadFilef(file_name, &(M->elements), &data_read, true);
+        FILE* infile=fopen(file_name, "r");
+	fread(M->elements, sizeof(float), data_read, infile);
+        fclose(infile);
 	return data_read;
 }
 
 // Write a 16x16 floating point matrix to file
 void WriteFile(Matrix M, char* file_name)
 {
-    cutWriteFilef(file_name, M.elements, M.width*M.height,
-                       0.0001f);
+    FILE* outfile=fopen(file_name, "w");
+    fread(M.elements, sizeof(float), M.width*M.height, outfile);
+    //cutWriteFilef(file_name, M.elements, M.width*M.height,
+    //                   0.0001f);
+}
+bool comparefe(float* A, float* B, int len, float tol)
+{
+    for (int z=0;z<len;z++)
+       if (fabs(A[z]-B[z]) > tol) return false;
+    return true;
 }

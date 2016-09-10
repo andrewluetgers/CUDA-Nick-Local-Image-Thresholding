@@ -11,17 +11,9 @@
 //Declare Constant Memory Variable
 __constant__ float Nc[IMAGE_WIDTH*IMAGE_HEIGTH];
 
-
-__global__ void NickKernel( Matrix N, Matrix P, int Image_width, int Image_height )
+__device__ __host__ void NickKernel_guts( unsigned int row, unsigned int col, 
+                     Matrix N, Matrix P, int Image_width, int Image_height) 
 {
-
-	unsigned int tx = threadIdx.x;
-	unsigned int ty = threadIdx.y;
-
-	//Determine row and col 
-	unsigned int row = (blockIdx.y * BLOCK_SIZE ) + ty;
-	unsigned int col = (blockIdx.x * BLOCK_SIZE ) + tx;
-	
 	//Determining the borders of local window
 	unsigned int  w_start_x = ( row < window_half_size) ? 0 : row - window_half_size;
 	unsigned int  w_start_y = ( col < window_half_size) ? 0 : col - window_half_size;
@@ -55,7 +47,25 @@ __global__ void NickKernel( Matrix N, Matrix P, int Image_width, int Image_heigh
 	}	
 }
 
+__global__ void NickKernel( Matrix N, Matrix P, int Image_width, int Image_height )
+{
 
+	unsigned int tx = threadIdx.x;
+	unsigned int ty = threadIdx.y;
+
+	//Determine row and col 
+	unsigned int row = (blockIdx.y * BLOCK_SIZE ) + ty;
+	unsigned int col = (blockIdx.x * BLOCK_SIZE ) + tx;
+        NickKernel_guts(row, col, N, P, Image_width, Image_height); 
+}
+
+void NickKernelCPU( Matrix N, Matrix P, int Image_width, int Image_height )
+{
+	for (int row=0; row<Image_width; row++)
+	for (int col=0; col<Image_height; col++)
+            NickKernel_guts(row, col, N, P, Image_width, Image_height);
+
+}
 
 
 __global__ void NickKernel_shared1( Matrix N, Matrix P, int Image_width, int Image_height )
